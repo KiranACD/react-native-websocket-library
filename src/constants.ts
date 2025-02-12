@@ -1,0 +1,21 @@
+export const DEFAULT_CONFIG = {
+    reconnect: false,
+    timeout: 5000,
+    maxReconnectAttempts: 0,
+};
+
+export const ERROR_CODES = {
+    CONNECTION_FAILED: 'CONNECTION_FAILED',
+    CONNECTION_TIMEOUT: 'CONNECTION_TIMEOUT',
+    INVALID_URL: 'INVALID_URL',
+    MESSAGE_FAILED: 'MESSAGE_FAILED',
+    MAX_RETRIES_EXCEEDED: 'MAX_RETRIES_EXCEEDED',
+};
+
+export enum WebSocketStatus {
+    CONNECTING = 'CONNECTING',
+    CONNECTED = 'CONNECTED',
+    DISCONNECTED = 'DISCONNECTED',
+    RECONNECTING = 'RECONNECTING',
+    CLOSED = 'CLOSED',
+};
