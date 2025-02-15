@@ -7,14 +7,15 @@ import { WebSocketError, WebSocketEventMap, WebSocketMessage, WebSocketOptions }
  * This class handles all the low-level WebSocket operations and provides a clean API.
 */
 
-export class RNWebocket {
+export class RNWebSocket {
     private url: string;
     private ws: WebSocket | null;
     private config: WebSocketOptions;
     private eventListeners: Partial<Record<keyof WebSocketEventMap, Set<Function>>>;
     private status: WebSocketStatus;
     private manualClose: boolean; // prevents automatic reconnection when the user closes the connection
-    private reconnectTimeout: NodeJS.Timeout | null; // Used to assign the reference of the reconnect timeout
+    private connectionTimeout: NodeJS.Timeout | null;
+    private reconnectCount: number;
 
     // Merges user config with default values to ensure all required settings exist.
     constructor(url: string, config: WebSocketOptions) {
@@ -25,7 +26,8 @@ export class RNWebocket {
         this.eventListeners = {};
         this.manualClose = false;
         this.status = WebSocketStatus.DISCONNECTED;
-        this.reconnectTimeout = null;
+        this.connectionTimeout = null;
+        this.reconnectCount = 0;
 
         this.initializeEventListeners();
     }
@@ -57,6 +59,7 @@ export class RNWebocket {
     */
     private updateStatus(newStatus: WebSocketStatus) {
         this.status = newStatus;
+        this.emit('statusChange', newStatus);
     }
 
     /**
@@ -74,6 +77,7 @@ export class RNWebocket {
         try {
             this.ws = new WebSocket(this.url, this.config.protocols);
             this.setupEventListeners();
+            this.startConnectionTimeout();
         } catch (error) {
             this.handleError({
                 code: 0,
@@ -92,6 +96,7 @@ export class RNWebocket {
         this.ws.onopen = () => {
             this.clearConnectionTimeout();
             this.updateStatus(WebSocketStatus.CONNECTED);
+            this.resetReconnectCount();
             this.emit('connect');
         };
 
@@ -102,8 +107,6 @@ export class RNWebocket {
             // Only attempt reconnection if the connection wasn't manually closed
             if (!this.manualClose) {
                 this.handleReconnection();
-            } else {
-                this.updateStatus(WebSocketStatus.DISCONNECTED)
             }
         };
 
@@ -128,33 +131,78 @@ export class RNWebocket {
         this.emit('message', message);
     }
 
+    public send(data: string | ArrayBuffer): void {
+        if (this.status !== WebSocketStatus.CONNECTED) {
+            this.handleError({
+                code: -1,
+                message: 'Cannot send message: WebSocket is not connected',
+                timestamp: Date.now(),
+            });
+            return;
+        }
+
+        try {
+            this.ws?.send(data);
+        } catch (error) {
+            this.handleError({
+                code: -1,
+                message: 'Failed to send message',
+                timestamp: Date.now(),
+            });
+        }
+    }
+
     /**
      * Centralizes error handling for the WebSocket client.
     */
     private handleError(error: WebSocketError): void {
-        console.error('WebSocket error: ', error);
+        this.emit('error', error);
+    }
+
+    private disconnect(): void {
+        this.clearConnectionTimeout();
+        if (this.ws) {
+            this.ws.close();
+            this.ws = null;
+        }
+        this.status = WebSocketStatus.DISCONNECTED;
     }
 
     /**
      * Cleanly closes the WebSocket connection.
      * Sets manual close flag to prevent automatic reconnection attempts.
     */
-    public disconnect(): void {
+    public close(): void {
         this.manualClose = true;
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
-        }
+        this.disconnect();
     }
 
     /**
      * Handles reconnection attempts after connection loss.
     */
     private handleReconnection(): void {
-        if (this.manualClose) return;
+        if (this.manualClose || (this.config.maxReconnectAttempts && this.config.maxReconnectAttempts < this.reconnectCount)) {
+            this.handleError({
+                code: 1,
+                message: 'Reconnect attempts exceeded',
+                timestamp: Date.now(),
+            })
+            return;
+        };
+        this.reconnectCount++;        
+        this.connect();
+    }
 
-        this.reconnectTimeout = setTimeout(() => {
-            this.connect();
+    private startConnectionTimeout(): void {
+        this.connectionTimeout = setTimeout(() => {
+            if (this.status !== WebSocketStatus.CONNECTED) {
+                this.handleError({
+                    code: 0,
+                    message: 'Connection timeout',
+                    timestamp: Date.now(),
+                });
+                this.disconnect();
+            }
         }, this.config.reconnectInterval);
     }
 
@@ -162,9 +210,13 @@ export class RNWebocket {
      * Clears any pending timeout functions.
     */
     private clearConnectionTimeout(): void {
-        if (this.reconnectTimeout) {
-            clearTimeout(this.reconnectTimeout);
-            this.reconnectTimeout = null;
+        if (this.connectionTimeout) {
+            clearTimeout(this.connectionTimeout);
+            this.connectionTimeout = null;
         }
+    }
+
+    private resetReconnectCount(): void {
+        this.reconnectCount = 0;
     }
 }
